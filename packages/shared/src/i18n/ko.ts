@@ -4621,6 +4621,7 @@ export const ko: TranslationKeys = {
         anchorLabel: "기준점:",
         anchorAriaLabel: "기준점 {position}",
         backgroundLabel: "배경:",
+        transparent: "투명",
         anchors: {
           topLeft: "왼쪽 상단",
           topCenter: "상단 중앙",

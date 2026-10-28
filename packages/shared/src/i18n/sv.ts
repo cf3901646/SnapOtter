@@ -4692,6 +4692,7 @@ export const sv: TranslationKeys = {
         anchorLabel: "Ankare:",
         anchorAriaLabel: "Ankare {position}",
         backgroundLabel: "Bakgrund:",
+        transparent: "Transparent",
         anchors: {
           topLeft: "uppe till vänster",
           topCenter: "uppe i mitten",

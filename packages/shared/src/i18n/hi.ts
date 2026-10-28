@@ -4491,6 +4491,7 @@ export const hi: TranslationKeys = {
         anchorLabel: "एंकर:",
         anchorAriaLabel: "एंकर {position}",
         backgroundLabel: "बैकग्राउंड:",
+        transparent: "पारदर्शी",
         anchors: {
           topLeft: "ऊपर बाएं",
           topCenter: "ऊपर मध्य",

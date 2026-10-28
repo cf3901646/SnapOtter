@@ -4415,6 +4415,7 @@ export const zhTW: TranslationKeys = {
         anchorLabel: "錨點：",
         anchorAriaLabel: "錨點 {position}",
         backgroundLabel: "背景：",
+        transparent: "透明",
         anchors: {
           topLeft: "左上",
           topCenter: "中上",

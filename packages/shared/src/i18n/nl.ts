@@ -4713,6 +4713,7 @@ export const nl: TranslationKeys = {
         anchorLabel: "Ankerpunt:",
         anchorAriaLabel: "Ankerpunt {position}",
         backgroundLabel: "Achtergrond:",
+        transparent: "Transparant",
         anchors: {
           topLeft: "linksboven",
           topCenter: "midden boven",

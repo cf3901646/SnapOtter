@@ -4687,6 +4687,7 @@ export const vi: TranslationKeys = {
         anchorLabel: "Neo:",
         anchorAriaLabel: "Neo {position}",
         backgroundLabel: "Nền:",
+        transparent: "Trong suốt",
         anchors: {
           topLeft: "trên trái",
           topCenter: "trên giữa",

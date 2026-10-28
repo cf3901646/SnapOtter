@@ -4638,6 +4638,7 @@ export const th: TranslationKeys = {
         anchorLabel: "จุดยึด:",
         anchorAriaLabel: "จุดยึด {position}",
         backgroundLabel: "พื้นหลัง:",
+        transparent: "โปร่งใส",
         anchors: {
           topLeft: "บนซ้าย",
           topCenter: "บนกลาง",

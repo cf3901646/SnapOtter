@@ -4698,6 +4698,7 @@ export const tr: TranslationKeys = {
         anchorLabel: "Sabitleme:",
         anchorAriaLabel: "Sabitleme: {position}",
         backgroundLabel: "Arka plan:",
+        transparent: "Saydam",
         anchors: {
           topLeft: "üst sol",
           topCenter: "üst orta",

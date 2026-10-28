@@ -4704,6 +4704,7 @@ export const ptBR: TranslationKeys = {
         anchorLabel: "Âncora:",
         anchorAriaLabel: "Âncora {position}",
         backgroundLabel: "Fundo:",
+        transparent: "Transparente",
         anchors: {
           topLeft: "superior esquerdo",
           topCenter: "superior central",

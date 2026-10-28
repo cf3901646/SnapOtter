@@ -4704,6 +4704,7 @@ export const pl: TranslationKeys = {
         anchorLabel: "Kotwica:",
         anchorAriaLabel: "Kotwica: {position}",
         backgroundLabel: "Tło:",
+        transparent: "Przezroczyste",
         anchors: {
           topLeft: "lewy górny",
           topCenter: "górny środek",
