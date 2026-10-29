@@ -283,9 +283,17 @@ def main():
 
         emit_progress(10, "Loading model")
 
+        from session_cache import evict_all, get_session, session_cost
+
         providers, device = onnx_providers()
+        model_path = os.path.join(model_home, f"{model}.onnx")
         try:
-            session = new_session(model, providers=providers)
+            session = get_session(
+                model,
+                providers,
+                lambda: new_session(model, providers=providers),
+                session_cost(model_path, providers),
+            )
         except Exception as e:
             if (
                 "CUDAExecutionProvider" in providers
@@ -294,7 +302,13 @@ def main():
             ):
                 from gpu import emit_info
                 emit_info(f"GPU session failed ({e}), falling back to CPU")
-                session = new_session(model, providers=["CPUExecutionProvider"])
+                cpu_providers = ["CPUExecutionProvider"]
+                session = get_session(
+                    model,
+                    cpu_providers,
+                    lambda: new_session(model, providers=cpu_providers),
+                    session_cost(model_path, cpu_providers),
+                )
                 device = "cpu"
             else:
                 raise
@@ -323,6 +337,7 @@ def main():
                 )
             except Exception as e:
                 if _is_oom(e):
+                    evict_all("out of memory")
                     raise
                 detail = str(e).strip() or type(e).__name__
                 if use_alpha_matting:
@@ -339,6 +354,7 @@ def main():
                         return remove(input_data, session=session, alpha_matting=False)
                     except Exception as retry_err:
                         if _is_oom(retry_err):
+                            evict_all("out of memory")
                             raise
                         retry_detail = str(retry_err).strip() or type(retry_err).__name__
                         raise RuntimeError(

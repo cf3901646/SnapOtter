@@ -27,6 +27,7 @@ import io
 import os
 import traceback
 
+import session_cache
 from sidecar_errors import build_error_envelope
 
 
@@ -281,6 +282,7 @@ def _run_script_main(script_name, args):
     drain_thread.start()
 
     exit_code = 0
+    session_cache.request_started()
     try:
         sys.argv = ["script.py"] + args
 
@@ -309,6 +311,8 @@ def _run_script_main(script_name, args):
         sys.stdout.flush()
         exit_code = 1
     finally:
+        session_cache.request_finished()
+
         # Flush before restoring
         sys.stdout.flush()
 
@@ -455,6 +459,7 @@ def main():
     )
     print(f"[dispatcher] Ready. GPU: {gpu}. Max requests: {MAX_REQUESTS}. Modules: {list(available_modules.keys())}", file=sys.stderr, flush=True)
 
+    session_cache.start_idle_reaper()
     _init_tracing()
 
     request_count = 0
