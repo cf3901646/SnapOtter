@@ -18,6 +18,7 @@ Env knobs (0 means auto, matching the API's convention):
 """
 import gc
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -58,18 +59,55 @@ def _env_non_negative_int(name):
     return max(val, 0)
 
 
-def _auto_budget():
-    # SNAPOTTER_GPU=0 forces CPU, so a VRAM-derived budget would be meaningless.
-    if (os.environ.get("SNAPOTTER_GPU") or "").lower() in ("0", "false", "no"):
+def _visible_gpu_index():
+    """Index nvidia-smi should read, or None when CUDA_VISIBLE_DEVICES hides every GPU."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return 0
+    first = visible.split(",")[0].strip()
+    if first == "" or first == "-1":
+        return None
+    return int(first) if first.isdigit() else 0
+
+
+def _total_vram_bytes():
+    """Total VRAM of the GPU the sidecar uses, or 0.
+
+    The background-removal bundle ships onnxruntime without torch, so torch
+    alone would leave exactly those hosts with caching silently off.
+    """
+    index = _visible_gpu_index()
+    if index is None:
         return 0
     try:
         import torch
         if torch.cuda.is_available():
-            _free, total = torch.cuda.mem_get_info()
-            return int(total * AUTO_VRAM_FRACTION)
+            return torch.cuda.mem_get_info()[1]
     except Exception:
         pass
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return int(out.stdout.strip().splitlines()[index]) * 1024 * 1024
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        pass
     return 0
+
+
+_auto_budget_cache = None
+
+
+def _auto_budget():
+    global _auto_budget_cache
+    # SNAPOTTER_GPU=0 forces CPU, so a VRAM-derived budget would be meaningless.
+    if (os.environ.get("SNAPOTTER_GPU") or "").lower() in ("0", "false", "no"):
+        return 0
+    if _auto_budget_cache is None:
+        _auto_budget_cache = int(_total_vram_bytes() * AUTO_VRAM_FRACTION)
+    return _auto_budget_cache
 
 
 def budget_bytes():

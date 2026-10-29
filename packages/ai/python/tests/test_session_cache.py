@@ -206,3 +206,59 @@ def test_reaper_loop_never_evicts_a_session_mid_request(monkeypatch):
     finally:
         stop.set()
         t.join()
+
+
+def _fake_smi(monkeypatch, stdout, returncode=0):
+    import subprocess
+    import types
+
+    monkeypatch.setitem(sys.modules, "torch", None)  # import torch raises ImportError
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: types.SimpleNamespace(returncode=returncode, stdout=stdout),
+    )
+
+
+def test_total_vram_falls_back_to_nvidia_smi_without_torch(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    _fake_smi(monkeypatch, "24576\n")
+    assert session_cache._total_vram_bytes() == 24576 * MB
+
+
+def test_total_vram_reads_the_visible_device(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    _fake_smi(monkeypatch, "12288\n24576\n")
+    assert session_cache._total_vram_bytes() == 24576 * MB
+
+
+@pytest.mark.parametrize("hidden", ["", "-1"])
+def test_hidden_gpus_mean_no_vram(monkeypatch, hidden):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", hidden)
+    _fake_smi(monkeypatch, "24576\n")
+    assert session_cache._total_vram_bytes() == 0
+
+
+def test_missing_nvidia_smi_means_no_vram(monkeypatch):
+    import subprocess
+
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setitem(sys.modules, "torch", None)
+
+    def boom(*a, **k):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert session_cache._total_vram_bytes() == 0
+
+
+def test_auto_budget_is_forty_percent_of_vram_and_memoized(monkeypatch):
+    calls = []
+    monkeypatch.setattr(session_cache, "_auto_budget_cache", None)
+    monkeypatch.setattr(
+        session_cache, "_total_vram_bytes", lambda: calls.append(1) or 10_000 * MB
+    )
+    monkeypatch.delenv("SNAPOTTER_GPU", raising=False)
+    assert session_cache._auto_budget() == 4_000 * MB
+    session_cache._auto_budget()
+    assert len(calls) == 1
