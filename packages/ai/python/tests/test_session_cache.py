@@ -79,6 +79,50 @@ def test_session_larger_than_budget_is_built_but_not_cached():
     assert not session_cache._entries
 
 
+def test_oversized_session_makes_room_instead_of_loading_beside_the_cache():
+    create, made = counting_factory()
+    session_cache.get_session("small", CUDA, create, 30 * MB)
+    ref = weakref.ref(made[0])
+    del made[:]
+    session_cache.get_session("big", CUDA, create, 101 * MB)
+    assert not session_cache._entries
+    assert ref() is None
+
+
+def test_cpu_sessions_are_cached_only_with_an_explicit_budget(monkeypatch):
+    monkeypatch.delenv("AI_SESSION_CACHE_BYTES")
+    monkeypatch.setattr(session_cache, "_auto_budget", lambda: 100 * MB)
+    assert session_cache.budget_bytes(CPU) == 0
+    assert session_cache.budget_bytes(CUDA) == 100 * MB
+    monkeypatch.setenv("AI_SESSION_CACHE_BYTES", str(50 * MB))
+    assert session_cache.budget_bytes(CPU) == 50 * MB
+
+
+def test_evict_all_reports_whether_it_freed_anything():
+    assert session_cache.evict_all("empty") is False
+    create, _ = counting_factory()
+    session_cache.get_session("a", CUDA, create, 10 * MB)
+    assert session_cache.evict_all("full") is True
+
+
+def test_a_failed_vram_probe_is_not_remembered(monkeypatch):
+    monkeypatch.setattr(session_cache, "_auto_budget_cache", None)
+    monkeypatch.delenv("SNAPOTTER_GPU", raising=False)
+    answers = iter([0, 10_000 * MB, 99_999 * MB])
+    monkeypatch.setattr(session_cache, "_total_vram_bytes", lambda: next(answers))
+    assert session_cache._auto_budget() == 0
+    assert session_cache._auto_budget() == 4_000 * MB
+    assert session_cache._auto_budget() == 4_000 * MB
+
+
+def test_unpinned_gpu_uses_the_smallest_card(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    _fake_smi(monkeypatch, "24576\n12288\n")
+    assert session_cache._total_vram_bytes() == 12288 * MB
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-8f2a1c0e-0000-0000-0000-000000000000")
+    assert session_cache._total_vram_bytes() == 12288 * MB
+
+
 def test_budget_of_one_byte_disables_caching(monkeypatch):
     monkeypatch.setenv("AI_SESSION_CACHE_BYTES", "1")
     create, made = counting_factory()
@@ -150,11 +194,15 @@ def test_idle_eviction_never_runs_during_a_request(monkeypatch):
     session_cache.request_started()
     session_cache.get_session("m", CUDA, create, 10 * MB)
     entry = session_cache._entries[("m", tuple(CUDA))]
-    assert session_cache.evict_idle(entry.last_used + 10_000) == 0
-    session_cache.request_finished()
+    started = entry.last_used
+    assert session_cache.evict_idle(started + 10_000) == 0
     # A long job must not count as idle time: finishing refreshes last_used.
-    assert session_cache.evict_idle(entry.last_used) == 0
+    entry.last_used = started - 1_000
+    session_cache.request_finished()
+    assert entry.last_used > started - 1_000
+    assert session_cache.evict_idle(entry.last_used + 59) == 0
     assert session_cache._entries
+    assert session_cache.evict_idle(entry.last_used + 60) == 1
 
 
 def test_failed_create_leaves_no_entry():

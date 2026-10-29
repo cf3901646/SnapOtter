@@ -300,16 +300,30 @@ def main():
                 and not _is_host_oom(e)
                 and not _is_model_load_error(e)
             ):
-                from gpu import emit_info
-                emit_info(f"GPU session failed ({e}), falling back to CPU")
-                cpu_providers = ["CPUExecutionProvider"]
-                session = get_session(
-                    model,
-                    cpu_providers,
-                    lambda: new_session(model, providers=cpu_providers),
-                    session_cost(model_path, cpu_providers),
-                )
-                device = "cpu"
+                session = None
+                if _is_oom(e) and evict_all("GPU out of memory loading a session"):
+                    # The cache was holding VRAM that is free now. Keep the GPU
+                    # (and alpha matting, which CPU skips) instead of degrading.
+                    try:
+                        session = get_session(
+                            model,
+                            providers,
+                            lambda: new_session(model, providers=providers),
+                            session_cost(model_path, providers),
+                        )
+                    except Exception as retry_err:
+                        e = retry_err
+                if session is None:
+                    from gpu import emit_info
+                    emit_info(f"GPU session failed ({e}), falling back to CPU")
+                    cpu_providers = ["CPUExecutionProvider"]
+                    session = get_session(
+                        model,
+                        cpu_providers,
+                        lambda: new_session(model, providers=cpu_providers),
+                        session_cost(model_path, cpu_providers),
+                    )
+                    device = "cpu"
             else:
                 raise
 

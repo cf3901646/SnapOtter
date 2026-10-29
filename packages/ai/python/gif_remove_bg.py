@@ -317,6 +317,14 @@ def _create_session(model, providers, device):
             and not _is_host_oom(e)
             and not _is_model_load_error(e)
         ):
+            from session_cache import evict_all
+
+            if _is_oom(e) and evict_all("GPU out of memory loading a session"):
+                # The cache was holding VRAM that is free now; stay on the GPU.
+                try:
+                    return _cached_session(model, providers), device
+                except Exception as retry_err:
+                    e = retry_err
             print(
                 f"[gif-remove-bg] CUDA session for '{model}' failed ({e}); falling back to CPU",
                 file=sys.stderr,

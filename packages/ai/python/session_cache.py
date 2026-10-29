@@ -60,21 +60,24 @@ def _env_non_negative_int(name):
 
 
 def _visible_gpu_index():
-    """Index nvidia-smi should read, or None when CUDA_VISIBLE_DEVICES hides every GPU."""
+    """GPU index to read, "all" when it can't be pinned, None when none are visible."""
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if visible is None:
-        return 0
+        return "all"
     first = visible.split(",")[0].strip()
     if first == "" or first == "-1":
         return None
-    return int(first) if first.isdigit() else 0
+    return int(first) if first.isdigit() else "all"
 
 
 def _total_vram_bytes():
     """Total VRAM of the GPU the sidecar uses, or 0.
 
     The background-removal bundle ships onnxruntime without torch, so torch
-    alone would leave exactly those hosts with caching silently off.
+    alone would leave exactly those hosts with caching silently off. When the
+    device can't be pinned (nvidia-smi orders by PCI bus, CUDA by speed, and
+    CUDA_VISIBLE_DEVICES may hold UUIDs) the smallest card is used, so the
+    budget errs low instead of sizing itself from a bigger GPU than ORT runs on.
     """
     index = _visible_gpu_index()
     if index is None:
@@ -91,7 +94,8 @@ def _total_vram_bytes():
             capture_output=True, text=True, timeout=5,
         )
         if out.returncode == 0:
-            return int(out.stdout.strip().splitlines()[index]) * 1024 * 1024
+            totals = [int(line) * 1024 * 1024 for line in out.stdout.split()]
+            return min(totals) if index == "all" else totals[index]
     except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
         pass
     return 0
@@ -106,12 +110,24 @@ def _auto_budget():
     if (os.environ.get("SNAPOTTER_GPU") or "").lower() in ("0", "false", "no"):
         return 0
     if _auto_budget_cache is None:
-        _auto_budget_cache = int(_total_vram_bytes() * AUTO_VRAM_FRACTION)
+        budget = int(_total_vram_bytes() * AUTO_VRAM_FRACTION)
+        # A zero may be a probe that timed out on a busy host; keep asking.
+        if budget > 0:
+            _auto_budget_cache = budget
+        return budget
     return _auto_budget_cache
 
 
-def budget_bytes():
-    return _env_non_negative_int("AI_SESSION_CACHE_BYTES") or _auto_budget()
+def budget_bytes(providers=()):
+    """Explicit budget if set; otherwise VRAM-derived, and only for CUDA sessions.
+
+    A VRAM-sized budget says nothing about host RAM, so CPU sessions are cached
+    only when the operator sets AI_SESSION_CACHE_BYTES.
+    """
+    explicit = _env_non_negative_int("AI_SESSION_CACHE_BYTES")
+    if explicit:
+        return explicit
+    return _auto_budget() if "CUDAExecutionProvider" in providers else 0
 
 
 def idle_timeout_s():
@@ -170,8 +186,13 @@ def get_session(model, providers, create, cost, **call_opts):
             _used_this_request.add(key)
             return entry.value
 
-        budget = budget_bytes()
-        if cost is None or budget <= 0 or cost > budget:
+        budget = budget_bytes(providers)
+        if cost is None or budget <= 0:
+            return create()
+        if cost > budget:
+            # Too big to keep, but it still has to fit on the card next to
+            # whatever is cached, so make room instead of loading beside it.
+            evict_all("making room for an uncacheable session")
             return create()
 
         _evict_until_fits(cost, budget)
@@ -182,14 +203,19 @@ def get_session(model, providers, create, cost, **call_opts):
 
 
 def evict_all(reason):
-    """Drop every session, e.g. after an out-of-memory failure left VRAM fragmented."""
+    """Drop every session, e.g. after an out-of-memory failure left VRAM fragmented.
+
+    Returns whether anything was held, so a caller can retry only when there
+    was memory to give back.
+    """
     with _lock:
         if not _entries:
-            return
+            return False
         _entries.clear()
         _used_this_request.clear()
         _log(f"evicted all sessions ({reason})")
     gc.collect()
+    return True
 
 
 def request_started():

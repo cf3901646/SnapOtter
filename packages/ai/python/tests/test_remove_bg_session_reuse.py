@@ -21,16 +21,20 @@ def harness(tmp_path, monkeypatch):
     home = tmp_path / "u2net"
     home.mkdir()
     (home / "u2net.onnx").write_bytes(b"x" * 1024)
+    (home / "isnet-general-use.onnx").write_bytes(b"x" * 1024)
     monkeypatch.setenv("U2NET_HOME", str(home))
     monkeypatch.setenv("AI_SESSION_CACHE_BYTES", str(10 * 1024 * 1024))
     session_cache._entries.clear()
 
     state = types.SimpleNamespace(
-        sessions=[], providers=CUDA, device="cuda", remove_error=None
+        sessions=[], providers=CUDA, device="cuda", remove_error=None, create_error=None
     )
 
     def new_session(model, providers=None):
         state.sessions.append((model, tuple(providers)))
+        if state.create_error is not None and "CUDAExecutionProvider" in providers:
+            err, state.create_error = state.create_error, None
+            raise err
         return object()
 
     def remove(_data, session=None, **_kw):
@@ -61,11 +65,11 @@ def harness(tmp_path, monkeypatch):
     src = tmp_path / "in.png"
     src.write_bytes(b"img")
 
-    def run():
+    def run(model="u2net"):
         out = tmp_path / "out.png"
         buf = io.StringIO()
         monkeypatch.setattr(
-            sys, "argv", ["remove_bg.py", str(src), str(out), json.dumps({"model": "u2net"})]
+            sys, "argv", ["remove_bg.py", str(src), str(out), json.dumps({"model": model})]
         )
         monkeypatch.setattr(sys, "stdout", buf)
         remove_bg.main()
@@ -98,3 +102,23 @@ def test_out_of_memory_drops_the_cached_session(harness):
     harness.remove_error = None
     harness.run()
     assert len(harness.sessions) == 2
+
+
+def test_gpu_oom_loading_a_session_frees_the_cache_and_stays_on_gpu(harness):
+    harness.run("u2net")
+    harness.create_error = RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+    result = harness.run("isnet-general-use")
+    assert result["success"] is True
+    assert result["device"] == "cuda"
+    assert harness.sessions == [
+        ("u2net", tuple(CUDA)),
+        ("isnet-general-use", tuple(CUDA)),
+        ("isnet-general-use", tuple(CUDA)),
+    ]
+
+
+def test_gpu_oom_with_nothing_cached_still_falls_back_to_cpu(harness):
+    harness.create_error = RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+    result = harness.run("u2net")
+    assert result["device"] == "cpu"
+    assert harness.sessions == [("u2net", tuple(CUDA)), ("u2net", tuple(CPU))]
