@@ -89,15 +89,37 @@ export function buildMinimalEnv(): Record<string, string> {
   return env;
 }
 
-/** Try venv first, then system python. */
-function getPythonPath(): string {
-  const venvPath = process.env.PYTHON_VENV_PATH || resolve(__dirname, "../../../.venv");
+/** Venv the AI sidecar runs from. Bundle installs write into it. */
+function aiVenvPath(): string {
+  return process.env.PYTHON_VENV_PATH || resolve(__dirname, "../../../.venv");
+}
+
+/** Venv bundle installs write into; mirrors the install route's default. */
+function installVenvPath(): string {
+  return process.env.PYTHON_VENV_PATH || "/opt/venv";
+}
+
+/** Try the given venv first, then system python. */
+function getPythonPath(venvPath: string = aiVenvPath()): string {
   const path = process.platform === "win32" ? win32 : posix;
   const venvPython = path.join(
     venvPath,
     process.platform === "win32" ? "Scripts/python.exe" : "bin/python3",
   );
   return existsSync(venvPython) ? venvPython : process.platform === "win32" ? "python" : "python3";
+}
+
+/**
+ * Document tasks need only base packages (WeasyPrint, PyMuPDF, pikepdf), so
+ * they can run from a venv that installs never rewrite, such as the image's
+ * baked /opt/venv. Only a venv that is not the install target can skip the
+ * venv lock; otherwise a document job would dlopen libraries mid-install.
+ */
+function docsDispatcherOptions(): { venvPath?: string; takesVenvLock: boolean } {
+  const docsVenv = process.env.DOCS_PYTHON_VENV_PATH;
+  if (!docsVenv) return { takesVenvLock: true };
+  const sharesInstallVenv = resolve(docsVenv) === resolve(installVenvPath());
+  return { venvPath: docsVenv, takesVenvLock: sharesInstallVenv };
 }
 
 /**
@@ -489,9 +511,15 @@ export class PythonDispatcher {
    * NOT add to this set, so a genuinely hung script still counts as a crash.
    */
   private stoppedChildren = new WeakSet<ChildProcess>();
+  /** Venv root to run from; undefined resolves the AI venv at spawn time. */
+  private venvPath: string | undefined;
+  /** False for a venv no install writes to, so requests skip the venv lock. */
+  private takesVenvLock: boolean;
 
-  constructor(opts: { profile: "ai" | "docs" }) {
+  constructor(opts: { profile: "ai" | "docs"; venvPath?: string; takesVenvLock?: boolean }) {
     this.profile = opts.profile;
+    this.venvPath = opts.venvPath;
+    this.takesVenvLock = opts.takesVenvLock ?? true;
   }
 
   private buildEnv(): Record<string, string> {
@@ -606,7 +634,7 @@ export class PythonDispatcher {
       // every line it logs would carry that one job's trace id (#1500).
       // Each request's own trace context goes to Python with the request.
       const proc = context.with(ROOT_CONTEXT, () =>
-        spawn(getPythonPath(), [resolve(PYTHON_DIR, "dispatcher.py")], {
+        spawn(getPythonPath(this.venvPath), [resolve(PYTHON_DIR, "dispatcher.py")], {
           stdio: ["pipe", "pipe", "pipe"],
           env: this.buildEnv(),
         }),
@@ -1108,7 +1136,7 @@ export class PythonDispatcher {
         onAbort();
         return;
       }
-      trySpawn(getPythonPath(), false);
+      trySpawn(getPythonPath(this.venvPath), false);
     });
   }
 
@@ -1304,6 +1332,7 @@ export class PythonDispatcher {
     // segfaults the sidecar. In the common case the lock is free, so acquire it
     // synchronously and run inline (no microtask deferral, preserving the prior
     // call timing); only when an install holds it do we await.
+    if (!this.takesVenvLock) return runWithSpan();
     const release = tryAcquireVenvRead();
     if (release) return runWithSpan().finally(release);
     return acquireVenvRead().then((r) => runWithSpan().finally(r));
@@ -1378,7 +1407,8 @@ let docsDispatcher: PythonDispatcher | null = null;
 
 /** Lazy docs-profile dispatcher instance (same protocol, no new IPC). */
 export function getDocsDispatcher(): PythonDispatcher {
-  if (!docsDispatcher) docsDispatcher = new PythonDispatcher({ profile: "docs" });
+  if (!docsDispatcher)
+    docsDispatcher = new PythonDispatcher({ profile: "docs", ...docsDispatcherOptions() });
   return docsDispatcher;
 }
 

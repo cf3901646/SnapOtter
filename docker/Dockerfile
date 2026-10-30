@@ -723,6 +723,7 @@ ENV PORT=1349 \
     WORKSPACE_PATH=/tmp/workspace \
     FILES_STORAGE_PATH=/data/files \
     PYTHON_VENV_PATH=/data/ai/venv \
+    DOCS_PYTHON_VENV_PATH=/opt/venv \
     MODELS_PATH=/data/ai/models \
     DATA_DIR=/data \
     U2NET_HOME=/data/ai/models/rembg \

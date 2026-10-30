@@ -4,6 +4,7 @@
   "globalPassThroughEnv": [
     "API_URL",
     "CAIRE_PATH",
+    "DOCS_PYTHON_VENV_PATH",
     "E2E_PG_BASE_URL",
     "EDITOR_TEST_PORT",
     "FULL_MATRIX",
